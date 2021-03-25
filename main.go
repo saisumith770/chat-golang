@@ -1,22 +1,26 @@
-package RTC
+package main
 
 import (
+	"log"
 	"net/http"
-	"context"
 
 	"github.com/go-redis/redis"
 	"github.com/gorilla/mux"
-	
-	"RTC/sessions"
 )
 
 type Server struct {
 	RedisState bool
 }
 
-var ctx = context.Background()
-
 var Initiation = &Server{true}
+
+func serveHome(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	http.ServeFile(w, r, "home.html")
+}
 
 func main() {
 	redisConn := redis.NewClient(&redis.Options{
@@ -24,17 +28,21 @@ func main() {
 		Password: "",
 		DB:       0,
 	})
-	pong, err := redisConn.Ping(ctx).Result()
+	pong, err := redisConn.Ping().Result()
 	if err != nil || pong != "PONG" {
 		Initiation.RedisState = false
 	}
+
 	router := mux.NewRouter()
+	hub := NewHub()
+	go hub.run()
 
-	sessions.SessionRouter(
-		router.Path("/sessions").Subrouter(),
-		redisConn,
-		Initiation.RedisState,
-	)
+	router.HandleFunc("/{room}", serveHome)
 
-	http.ListenAndServe(":8080", router)
+	router.HandleFunc("/ws/{room}", func(rw http.ResponseWriter, r *http.Request) {
+		query := mux.Vars(r)
+		ServeWs(hub, rw, r,query["room"])
+	})
+
+	log.Fatal(http.ListenAndServe(":8080", router))
 }
